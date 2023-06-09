@@ -116,7 +116,7 @@ void window_to_scene( int wx, int wy, float& sx, float& sy )
 //eye position
 glm::vec3 eyePos(0.0f, 1.0f, 2.0f);
 glm::vec3 centerPos(eyePos.x, eyePos.y, 0.0f);
-glm::vec3 lightPos(0.5f, 0.5f, -1.0f);
+glm::vec3 lightPos(-0.5f, 1.5f, -1.0f);
 void CreateTransformationMatrices( void )
 {
 	// PROJECTION MATRIX
@@ -150,7 +150,7 @@ glm::vec4 shade(glm::vec4 vert_Pos, glm::vec4 vert_Color, glm::vec4 vert_Normal,
 	glm::mat4 transf = PerspViewMatrix * PerspModelMatrix;
 
 	glm::vec3 FragPos = glm::vec3(transf * vert_Pos);
-	glm::vec3 FragNorm = glm::mat3(transpose(inverse(transf))) * glm::vec3(vert_Normal.x, vert_Normal.y, vert_Normal.z);
+	glm::vec3 FragNorm = glm::mat3(transpose(inverse(transf))) * glm::normalize(glm::vec3(vert_Normal.x, vert_Normal.y, vert_Normal.z));
 	glm::vec3 LightPos = glm::vec4(lightPos, 1.0f);
 
 
@@ -169,18 +169,17 @@ glm::vec4 shade(glm::vec4 vert_Pos, glm::vec4 vert_Color, glm::vec4 vert_Normal,
 	}
 	return amb + dif + spe;
 }
-bool rayTriangleIntersect(glm::vec3& orig, glm::vec3& dir, glm::vec3& v0, glm::vec3& v1, glm::vec3& v2, float& t) {
+bool rayTriangleIntersect(glm::vec3& orig, glm::vec3& dir, glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, float& t) {
 	//compute the triangle's normal
 	glm::vec3 v1v0 = v1 - v0;
 	glm::vec3 v2v0 = v2 - v0;
 
 	glm::vec3 N = glm::cross(v1v0, v2v0);
-	//N = glm::normalize(N);
+	N = glm::normalize(N);
 	//find P, the intersection point
 	//check if triangle and ray are parallel, if the normal of the triangle and the ray direction are orthoganal, then triangle and ray are parallel
 
 	if (glm::dot(dir, N) > 0) { return false; }// only looks at the front side
-
 
 	float dot = glm::dot(N, dir);
 	if (abs(dot) < FLT_EPSILON) { return false; }
@@ -221,8 +220,7 @@ bool rayTriangleIntersect(glm::vec3& orig, glm::vec3& dir, glm::vec3& v0, glm::v
 	//if C and N are going opposite direciton, then P is outside of the triangle
 	return true;
 }
-bool checkIntersection(glm::vec3 orig, glm::vec3 dir, float & t, int& j) {
-	
+bool checkIntersection(glm::vec3& orig, glm::vec3 &dir, float & t, int& j) {
 	j = 0;
 	for (int i = 0;i < shapes_vertices.size() / 3; ++i) {
 		glm::vec3 v0 = shapes_vertices[j];
@@ -235,25 +233,48 @@ bool checkIntersection(glm::vec3 orig, glm::vec3 dir, float & t, int& j) {
 	}
 	return false;
 }
-glm::vec4 RayTrace(glm::vec3 &orig, glm::vec3 dir, int depth) {
+glm::vec4 RayTrace(glm::vec3 &orig, glm::vec3& u, int depth) {
 	int shapeIndex;
-	float t;
+	float t ;
 	glm::vec4 color(0.1f, 0.1f, 0.1f,1.0f);
-
+	//Part I - NoneRecursive computations
 	//if no point was intersection return the background color
-	if (!checkIntersection(orig, dir, t, shapeIndex) ) {
+	if (!checkIntersection(orig, u, t, shapeIndex) ) {
 		return color;
 	}
 
 	//let z be the first intersection point
-	glm::vec3 z(t * dir + orig);
+	glm::vec3 z(t * u + orig);
+	//set n to be the surface normal at the intersection
 
-	int shadowIndex;
+
+	
+	int shadowIndex=0;
 	//shadow feeler from z to the light
 	glm::vec3 shadowFeeler(lightPos - z);
 	bool shadow = checkIntersection(z, shadowFeeler, t, shadowIndex);
 
-	color = shade(glm::vec4(z, 1.0f), shapes_colors[shapeIndex], shapes_normal[shapeIndex], shadow);
+	color = shade(glm::vec4(z, 1.0f), shapes_colors[shapeIndex],glm::normalize( shapes_normal[shapeIndex]), shadow);
+
+	//Part II - Recursive computations
+	if (depth == 0) {
+		return color;	//Reached maximum trace depth
+	}
+	
+	float prg = 0.3f;
+
+
+	glm::vec3 n(shapes_normal[shapeIndex]);
+	n = glm::normalize(n);
+	//Calculate reflection direction and add in reflection color
+	if (prg != 0.0f) { //if non zero reflection
+		u = glm::normalize(u);
+		n = glm::normalize(n);
+		glm::vec3 r = u - ((2 * glm::dot(u, n)) * n) ; 
+		//glm::vec3 r = glm::reflect(u, n);
+		r = glm::normalize(r);
+		color = color + prg * RayTrace(z, r, depth - 1); 
+	}
 	return color;
 	
 }
@@ -263,12 +284,11 @@ void RayTraceMain(float Px,float Py) {
 	glm::vec3 x(eyePos);  
 
 	// let maxDepth be a positive integer
-	int maxDepth = 2;							
+	int maxDepth = 1;							
 
 	//set u as unit vector in the direction from x to p;
 	glm::vec3 P(Px, Py, 0);
 	glm::vec3 u(P-x); 
-	u = glm::normalize(u);
 	glm::vec4 color(RayTrace(x, u, maxDepth));
 	
 	for (int i = 0; i < 6; i++) {
@@ -323,7 +343,94 @@ void CreateAxisBuffers( void )
 //
 //void CreateMyOwnObject( void ) ...
 //
+void CreateCylinder(float x, float y, float z, float r, float height) {
+	float pi = 3.14159f;
+	float n = 6.0f;
+	float thetaDif = 2 * pi / n;
+	//top and bottom
+	for (float theta = 0; theta < 2 * pi; theta += thetaDif) {
+		float Ax = r * cos(theta);
+		float Ay = 0.0f;
+		float Az = r * sin(theta);
+		float A_x = r * cos(theta + thetaDif);
+		float A_y = 0.0f;
+		float A_z = r * sin(theta + thetaDif);
+		//bottom
+		shapes_vertices.push_back(glm::vec4(Ax + x, Ay + 0.01f + y, Az + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(A_x + x, A_y + 0.01f + y, A_z + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(0.0f + x, 0.01f + y, 0.0f + z, 1.0f));
+		//top
+		shapes_vertices.push_back(glm::vec4(A_x + x, A_y + y + height, A_z + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(Ax + x, Ay + y + height, Az + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(0.0f + x, height + y, 0.0f + z, 1.0f));
+		//wall
+		shapes_vertices.push_back(glm::vec4(A_x + x, A_y + y, A_z + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(Ax + x, Ay + y, Az + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(Ax + x, Ay + height + y, Az + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(Ax + x, Ay + height + y, Az + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(A_x + x, A_y + y + height, A_z + z, 1.0f));
+		shapes_vertices.push_back(glm::vec4(A_x + x, A_y + y, A_z + z, 1.0f));
 
+		//normal
+
+
+
+		glm::vec4 normalA(glm::normalize(glm::vec3(0.0f, -1.0f, 0.0f)), 1.0f);
+		glm::vec4 normalB(glm::normalize(glm::vec3(0.0f, -1.0f, 0.0f)), 1.0f);
+		glm::vec4 normalC(glm::normalize(glm::vec3(0.0f, -1.0f, 0.0f)), 1.0f);
+
+		shapes_normal.push_back(normalA);
+		shapes_normal.push_back(normalB);
+		shapes_normal.push_back(normalC);
+		normalA = glm::vec4(glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f)), 1.0f);
+		normalB = glm::vec4(glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f)), 1.0f);
+		normalC = glm::vec4(glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f)), 1.0f);
+
+		shapes_normal.push_back(normalA);
+		shapes_normal.push_back(normalB);
+		shapes_normal.push_back(normalC);
+
+		glm::vec3 A(Ax, Ay, Az);
+		glm::vec3 B(Ax, Ay + height , Az);
+		glm::vec3 C(A_x, A_y , A_z);
+		glm::vec3 edge1(A - C);
+		glm::vec3 edge2(B - C);
+		glm::vec4 face_normal(glm::cross(edge1, edge2),1.0f);
+
+		std::cout << glm::length(face_normal) << std::endl;
+
+		for (int i = 0;i < 6; i++) {
+			shapes_normal.push_back(face_normal);
+		}
+
+		for (int i = 0;i < 12;i++) {
+			shapes_colors.push_back(glm::vec4(0.6f, 1.0f, 0.6f, 1.0f));
+		}
+
+	}
+
+	glGenVertexArrays(1, &shapes_VAO);
+	glBindVertexArray(shapes_VAO);
+
+	glGenBuffers(3, &shapes_VBO[0]);
+	//first buffer
+	glBindBuffer(GL_ARRAY_BUFFER, shapes_VBO[0]);
+	glBufferData(GL_ARRAY_BUFFER, shapes_vertices.size() * sizeof(glm::vec4), &shapes_vertices[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+	glEnableVertexAttribArray(0);
+	//Second array
+	glBindBuffer(GL_ARRAY_BUFFER, shapes_VBO[1]);
+	glBufferData(GL_ARRAY_BUFFER, shapes_colors.size() * sizeof(glm::vec4), &shapes_colors[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+	glEnableVertexAttribArray(1);
+	//thrid array
+	glBindBuffer(GL_ARRAY_BUFFER, shapes_VBO[2]);
+	glBufferData(GL_ARRAY_BUFFER, shapes_normal.size() * sizeof(glm::vec4), &shapes_normal[0], GL_STATIC_DRAW);
+	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+	glEnableVertexAttribArray(2);
+
+	glBindVertexArray(0);
+}
 void CreateSphere(float x, float y, float z, float r) {
 	float pi = 3.1415f;
 	float n = 10.0f;
@@ -550,10 +657,21 @@ void CreateCuboid(float x, float y, float z, float width, float length, float he
 
 }
 void CreateFloor(void) {
-	glm::vec4 bottomLeft(-10.0f, 0.0f, -10.0f, 1.0f);
-	glm::vec4 bottomRight(10.0f, 0.0f, -10.0f, 1.0f);
-	glm::vec4 topLeft(-10.0f, 0.0f, 10.0f, 1.0f);
-	glm::vec4 topRight(10.0f, 0.0f, 10.0f, 1.0f);
+	//floor
+	glm::vec4 bottomLeft(-1.0f, 0.0f, -2.0f, 1.0f);
+	glm::vec4 bottomRight(1.0f, 0.0f, -2.0f, 1.0f);
+	glm::vec4 topLeft(-1.0f, 0.0f, 0.0f, 1.0f);
+	glm::vec4 topRight(1.0f, 0.0f, 0.0f, 1.0f);
+
+	//back wall
+	glm::vec4 ceilingLeft(-1.0f, 2.0f, -2.0f, 1.0f);
+	glm::vec4 ceilingRight(1.0f, 2.0f, -2.0f, 1.0f);
+
+	//leftwall
+	glm::vec4 leftwall(-1.0f, 2.0f, 0.0f, 1.0f);
+	//rightwall
+	glm::vec4 rightwall(1.0f, 2.0f, 0.0f, 1.0f);
+
 
 	shapes_vertices.push_back(bottomLeft);
 	shapes_vertices.push_back(topLeft);
@@ -562,11 +680,59 @@ void CreateFloor(void) {
 	shapes_vertices.push_back(topLeft);
 	shapes_vertices.push_back(topRight);
 
+	shapes_vertices.push_back(bottomRight);
+	shapes_vertices.push_back(ceilingLeft);
+	shapes_vertices.push_back(bottomLeft);
+	shapes_vertices.push_back(ceilingLeft);
+	shapes_vertices.push_back(bottomRight);
+	shapes_vertices.push_back(ceilingRight);
+
+	shapes_vertices.push_back(bottomLeft);
+	shapes_vertices.push_back(ceilingLeft);
+	shapes_vertices.push_back(topLeft);
+	shapes_vertices.push_back(topLeft);
+	shapes_vertices.push_back(ceilingLeft);
+	shapes_vertices.push_back(leftwall);
+
+	shapes_vertices.push_back(rightwall);
+	shapes_vertices.push_back(ceilingRight);
+	shapes_vertices.push_back(bottomRight);
+	shapes_vertices.push_back(bottomRight);
+	shapes_vertices.push_back(topRight);
+	shapes_vertices.push_back(rightwall);
+
+	shapes_vertices.push_back(ceilingLeft);
+	shapes_vertices.push_back(ceilingRight);
+	shapes_vertices.push_back(leftwall);
+	shapes_vertices.push_back(leftwall);
+	shapes_vertices.push_back(ceilingRight);
+	shapes_vertices.push_back(rightwall);
+
+
+
 
 	for (int i = 0; i < 6;i++) {
 		shapes_colors.push_back(glm::vec4(0.5f, 0.5f, 0.5f, 1.0f));
 		shapes_normal.push_back(glm::normalize(glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)));
 	}
+	for (int i = 0; i < 6;i++) {
+		shapes_colors.push_back(glm::vec4(1.0f, 0.5f, 0.5f, 1.0f));
+		shapes_normal.push_back(glm::normalize(glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)));
+	}
+
+	for (int i = 0; i < 6;i++) {
+		shapes_colors.push_back(glm::vec4(0.5f, 1.0f, 0.5f, 1.0f));
+		shapes_normal.push_back(glm::normalize(glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)));
+	}
+	for (int i = 0; i < 6;i++) {
+		shapes_colors.push_back(glm::vec4(0.5f, 0.5f, 1.0f, 1.0f));
+		shapes_normal.push_back(glm::normalize(glm::vec4(-1.0f, 0.0f, 0.0f, 1.0f)));
+	}
+	for (int i = 0; i < 6;i++) {
+		shapes_colors.push_back(glm::vec4(0.5f, 0.5f, 0.5f, 1.0f));
+		shapes_normal.push_back(glm::normalize(glm::vec4(0.0f, -1.0f, 0.0f, 1.0f)));
+	}
+
 	glGenVertexArrays(1, &shapes_VAO);
 	glBindVertexArray(shapes_VAO);
 
@@ -630,6 +796,7 @@ void CreateTriangle() {
 }
  
 void CreatePlane(float xdif, float ydif, float zdif) {
+
 
 	float width = 2000;
 	float height = 2000;
@@ -748,22 +915,28 @@ void keyboard_func( unsigned char key, int x, int y )
 		}
 		case'a':
 		{
-			eyePos.x -= 0.1f;
-			centerPos.x -= 0.1f;
-			for (int i = 0; i < plane_vertices.size();i++) {
-				plane_vertices[i].x -= 0.1f;
-			}
-			render();
+			//eyePos.x -= 0.1f;
+			//centerPos.x -= 0.1f;
+			//for (int i = 0; i < plane_vertices.size();i++) {
+			//	plane_vertices[i].x -= 0.1f;
+			//}
+			//render();
+
+			eyePos.x -= 0.5f;
+			centerPos.x -= 0.5f;
+			plane_vertices.clear();
+			plane_colors.clear();
+			CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);
 			break;
 		}
 		case'd':
 		{
-			eyePos.x += 0.1f;
-			centerPos.x += 0.1f;
-			for (int i = 0; i < plane_vertices.size();i++) {
-				plane_vertices[i].x += 0.1f;
-			}
-			render();
+			
+			eyePos.x += 0.5f;
+			centerPos.x += 0.5f;	
+			plane_vertices.clear();
+			plane_colors.clear();
+			CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);
 			break;
 		}
 		case'f':
@@ -786,8 +959,38 @@ void keyboard_func( unsigned char key, int x, int y )
 			render();
 			break;
 		}
-		
-		case '1':
+		case'1':
+		{
+			shapes_colors.clear();
+			shapes_vertices.clear();
+			shapes_normal.clear();
+			plane_vertices.clear();
+			plane_colors.clear();
+
+
+			CreateCylinder(1.0f, 1.0f, -2.0f, 0.2f, 0.5f);
+			CreateCylinder(-1.0f, 1.0f, -2.0f, 0.2f, 0.5f);
+			CreateCuboid(0.0f, 0.0f, -2.0f, 0.5f, 3.0f, 3.0f);
+
+			CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);
+			break;
+		}
+		case'2':
+		{
+			shapes_colors.clear();
+			shapes_vertices.clear();
+			shapes_normal.clear();
+			plane_vertices.clear();
+			plane_colors.clear();
+
+			CreateCylinder(0.0f, 0.0f, -2.0f, 0.2f, 0.5f);
+			CreateFloor();
+
+			CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);
+			break;
+		}
+
+		case '0':
 		{
 			draw_wireframe = !draw_wireframe;
 			if( draw_wireframe == true )
@@ -956,16 +1159,29 @@ void init( void )
 	//
 	// Consider calling a function to create your object here
 	//
-	
-	
-	//CreateCuboid(0.5f, 1.5f, -1.0f, 0.5f, 0.5f, 0.5f);
-	CreateSphere(0.5f, 1.5f, -1.0f, 0.3f);
-	//CreateTriangle();
-	CreateFloor();
-	
-	CreatePlane(eyePos.x, eyePos.y, eyePos.z -1.75f);
+	//case 1
+	/*CreateCylinder(1.0f, 1.0f, -2.0f, 0.2f, 0.5f);
+	CreateCylinder(-1.0f, 1.0f, -2.0f, 0.2f, 0.5f);
+	CreateCuboid(0.0f, 0.0f, -2.0f, 0.5f, 3.0f, 3.0f);
 
-	CreateSphere(lightPos.x, lightPos.y, lightPos.z, 0.1f);
+	CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);*/
+	
+	//case 2 
+	// 
+	
+	/*CreateCylinder(0.5f, 0.0f, -1.0f, 0.2f, 0.5f);
+	CreateCylinder(-0.5f, 0.0f, -1.0, 0.2f, 0.5f);*/
+	
+	CreateCuboid(0.5f, 0.0f, -1.0f, 0.2f, 0.2f, 0.2f);
+	CreateCuboid(-0.5f, 0.0f, -1.0f, 0.2f, 0.2f, 0.2f);
+
+	CreateFloor();
+
+	CreatePlane(eyePos.x, eyePos.y, eyePos.z - 1.75f);
+
+	
+
+	//CreateSphere(lightPos.x, lightPos.y, lightPos.z, 0.1f);
 	CreateNormLines();
 	std::cout << "Finished initializing...\n\n";
 }
